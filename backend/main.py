@@ -62,6 +62,57 @@ async def analyze_vitals(request: Dict[str, Any] = Body(...)):
             content={"error": str(e)}
         )
 
+@app.post("/api/suggest-prescription")
+async def suggest_prescription(request: Dict[str, Any] = Body(...)):
+    """Generate AI-powered prescription suggestions"""
+    try:
+        patient = request.get('patient', {})
+        vitals = request.get('vitals')
+        lab_reports = request.get('labReports', [])
+        
+        result = await generate_prescription_suggestions(patient, vitals, lab_reports)
+        return JSONResponse(content=result)
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+@app.post("/api/suggest-lab-tests")
+async def suggest_lab_tests(request: Dict[str, Any] = Body(...)):
+    """Generate AI-powered lab test recommendations"""
+    try:
+        patient = request.get('patient', {})
+        vitals = request.get('vitals')
+        lab_reports = request.get('labReports', [])
+        
+        result = await generate_lab_test_suggestions(patient, vitals, lab_reports)
+        return JSONResponse(content=result)
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+@app.post("/api/generate-followup")
+async def generate_followup(request: Dict[str, Any] = Body(...)):
+    """Generate AI-powered follow-up plan"""
+    try:
+        patient = request.get('patient', {})
+        vitals = request.get('vitals')
+        lab_reports = request.get('labReports', [])
+        
+        result = await generate_followup_plan(patient, vitals, lab_reports)
+        return JSONResponse(content=result)
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
 @app.post("/api/analyze")
 async def analyze_report(
     file: UploadFile = File(...),
@@ -103,6 +154,155 @@ def extract_text_from_pdf(content):
         return text
     except Exception as e:
         return f"Error extracting PDF: {str(e)}"
+
+async def analyze_image_with_gemini(content):
+    """Analyze image using Gemini Vision API"""
+    try:
+        if not GEMINI_API_KEY:
+            return "Mock image analysis: Lab report detected"
+        
+        image = Image.open(io.BytesIO(content))
+        
+        prompt = """Analyze this medical lab report image and extract all visible health metrics, values, and any test results.
+        Focus on cardiovascular health indicators if present (blood pressure, cholesterol, heart rate, etc.).
+        Return the information in a structured format."""
+        
+        response = model.generate_content([prompt, image])
+        return response.text
+    except Exception as e:
+        return f"Error analyzing image: {str(e)}"
+
+async def generate_prescription_suggestions(patient: dict, vitals: dict, lab_reports: list):
+    """Generate AI-powered prescription suggestions"""
+    
+    # Mock implementation - replace with Gemini API call if needed
+    if not GEMINI_API_KEY:
+        return generate_mock_prescription(patient, vitals, lab_reports)
+    
+    try:
+        # Build context from available data
+        context = f"""Patient: {patient.get('name')}, Age: {patient.get('age')}, Gender: {patient.get('gender')}
+        
+Vitals: {vitals.get('overallScore') if vitals else 'Not available'}/100
+Lab Reports: {len(lab_reports)} reports analyzed
+
+Based on this patient's data, suggest appropriate medications. Be CONCISE.
+
+Return EXACT JSON:
+{{
+    "medications": [
+        {{
+            "name": "Medication Name",
+            "dosage": "Dosage",
+            "frequency": "Frequency",
+            "duration": "Duration",
+            "priority": "High/Medium/Low",
+            "notes": "Brief note"
+        }}
+    ],
+    "notes": "Brief important notes (2-3 sentences)"
+}}
+"""
+        
+        response = model.generate_content(context)
+        response_text = response.text
+        
+        import json
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            return result
+        else:
+            return generate_mock_prescription(patient, vitals, lab_reports)
+            
+    except Exception as e:
+        print(f"Gemini API Error: {str(e)}")
+        return generate_mock_prescription(patient, vitals, lab_reports)
+
+async def generate_lab_test_suggestions(patient: dict, vitals: dict, lab_reports: list):
+    """Generate AI-powered lab test recommendations"""
+    
+    if not GEMINI_API_KEY:
+        return generate_mock_lab_tests(patient, vitals, lab_reports)
+    
+    try:
+        context = f"""Patient: {patient.get('name')}, Age: {patient.get('age')}, Gender: {patient.get('gender')}
+
+Vitals Score: {vitals.get('overallScore') if vitals else 'Not available'}/100
+Previous Lab Reports: {len(lab_reports)}
+
+Recommend additional lab tests needed. Be CONCISE.
+
+Return EXACT JSON:
+{{
+    "tests": [
+        {{
+            "name": "Test Name",
+            "reason": "Brief reason",
+            "urgency": "Urgent/Soon/Routine"
+        }}
+    ],
+    "instructions": "Brief pre-test instructions (2-3 sentences)"
+}}
+"""
+        
+        response = model.generate_content(context)
+        response_text = response.text
+        
+        import json
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            return result
+        else:
+            return generate_mock_lab_tests(patient, vitals, lab_reports)
+            
+    except Exception as e:
+        print(f"Gemini API Error: {str(e)}")
+        return generate_mock_lab_tests(patient, vitals, lab_reports)
+
+async def generate_followup_plan(patient: dict, vitals: dict, lab_reports: list):
+    """Generate AI-powered follow-up plan"""
+    
+    if not GEMINI_API_KEY:
+        return generate_mock_followup(patient, vitals, lab_reports)
+    
+    try:
+        context = f"""Patient: {patient.get('name')}, Age: {patient.get('age')}, Gender: {patient.get('gender')}
+
+Health Score: {vitals.get('overallScore') if vitals else 'Not available'}/100
+Lab Reports: {len(lab_reports)} analyzed
+
+Create a follow-up care plan. Be CONCISE.
+
+Return EXACT JSON:
+{{
+    "schedule": [
+        {{
+            "timeframe": "When (e.g., 'In 1 week')",
+            "action": "What to do",
+            "details": "Brief details"
+        }}
+    ],
+    "monitoring": "What to monitor (2-3 sentences)",
+    "goals": "Health goals (2-3 sentences)"
+}}
+"""
+        
+        response = model.generate_content(context)
+        response_text = response.text
+        
+        import json
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            return result
+        else:
+            return generate_mock_followup(patient, vitals, lab_reports)
+            
+    except Exception as e:
+        print(f"Gemini API Error: {str(e)}")
+        return generate_mock_followup(patient, vitals, lab_reports)
 
 async def analyze_image_with_gemini(content):
     """Analyze image using Gemini Vision API"""
@@ -364,6 +564,152 @@ def generate_mock_analysis(name: str, age: str, gender: str):
         ],
         "summary": f"Patient {name}'s cardiovascular health indicators are within normal ranges for age {age}. Blood pressure and heart rate show healthy values. No immediate concerns detected based on lab results.",
         "recommendations": "Continue maintaining a balanced diet and regular exercise routine. Monitor blood pressure monthly. Schedule annual cardiovascular checkup for preventive care."
+    }
+
+def generate_mock_prescription(patient: dict, vitals: dict, lab_reports: list):
+    """Generate mock prescription suggestions"""
+    score = vitals.get('overallScore', 85) if vitals else 85
+    
+    medications = []
+    
+    # Add medications based on health score
+    if score < 75:
+        medications.append({
+            "name": "Lisinopril",
+            "dosage": "10mg",
+            "frequency": "Once daily",
+            "duration": "30 days",
+            "priority": "High",
+            "notes": "For blood pressure management"
+        })
+        medications.append({
+            "name": "Atorvastatin",
+            "dosage": "20mg",
+            "frequency": "Once daily at bedtime",
+            "duration": "30 days",
+            "priority": "Medium",
+            "notes": "For cholesterol management"
+        })
+    else:
+        medications.append({
+            "name": "Multivitamin",
+            "dosage": "1 tablet",
+            "frequency": "Once daily",
+            "duration": "30 days",
+            "priority": "Low",
+            "notes": "General health maintenance"
+        })
+    
+    medications.append({
+        "name": "Aspirin",
+        "dosage": "81mg",
+        "frequency": "Once daily",
+        "duration": "Ongoing",
+        "priority": "Medium",
+        "notes": "Cardiovascular protection, low-dose"
+    })
+    
+    return {
+        "medications": medications,
+        "notes": f"Prescription based on health score of {score}/100. Monitor for any side effects. Follow up in 2 weeks for medication review."
+    }
+
+def generate_mock_lab_tests(patient: dict, vitals: dict, lab_reports: list):
+    """Generate mock lab test suggestions"""
+    score = vitals.get('overallScore', 85) if vitals else 85
+    age = int(patient.get('age', 45))
+    
+    tests = [
+        {
+            "name": "Complete Blood Count (CBC)",
+            "reason": "Routine health screening",
+            "urgency": "Routine"
+        },
+        {
+            "name": "Lipid Panel",
+            "reason": "Monitor cholesterol levels",
+            "urgency": "Soon" if score < 80 else "Routine"
+        }
+    ]
+    
+    if score < 75:
+        tests.append({
+            "name": "HbA1c (Glycated Hemoglobin)",
+            "reason": "Screen for diabetes risk",
+            "urgency": "Soon"
+        })
+        tests.append({
+            "name": "Kidney Function Tests",
+            "reason": "Assess kidney health",
+            "urgency": "Soon"
+        })
+    
+    if age > 40:
+        tests.append({
+            "name": "Thyroid Function (TSH)",
+            "reason": "Age-appropriate screening",
+            "urgency": "Routine"
+        })
+    
+    return {
+        "tests": tests,
+        "instructions": "Fasting for 8-12 hours required for lipid panel and blood sugar tests. Schedule in morning. Bring previous lab reports for comparison."
+    }
+
+def generate_mock_followup(patient: dict, vitals: dict, lab_reports: list):
+    """Generate mock follow-up plan"""
+    score = vitals.get('overallScore', 85) if vitals else 85
+    
+    schedule = []
+    
+    if score < 70:
+        schedule.append({
+            "timeframe": "In 1 week",
+            "action": "Follow-up consultation",
+            "details": "Review medication response and vital signs"
+        })
+        schedule.append({
+            "timeframe": "In 2 weeks",
+            "action": "Lab work review",
+            "details": "Discuss test results and adjust treatment plan"
+        })
+        schedule.append({
+            "timeframe": "In 1 month",
+            "action": "Comprehensive re-evaluation",
+            "details": "Full health assessment and progress review"
+        })
+    elif score < 85:
+        schedule.append({
+            "timeframe": "In 2 weeks",
+            "action": "Check-in appointment",
+            "details": "Monitor progress and address concerns"
+        })
+        schedule.append({
+            "timeframe": "In 1 month",
+            "action": "Follow-up visit",
+            "details": "Review lifestyle changes and vitals"
+        })
+        schedule.append({
+            "timeframe": "In 3 months",
+            "action": "Routine checkup",
+            "details": "Comprehensive health assessment"
+        })
+    else:
+        schedule.append({
+            "timeframe": "In 1 month",
+            "action": "Routine follow-up",
+            "details": "Maintain current health status"
+        })
+        schedule.append({
+            "timeframe": "In 6 months",
+            "action": "Annual checkup",
+            "details": "Comprehensive health screening"
+        })
+    
+    return {
+        "schedule": schedule,
+        "monitoring": "Track blood pressure daily, maintain weight log, monitor any new symptoms. Keep medication diary noting any side effects.",
+        "goals": "Maintain healthy lifestyle with regular exercise (150 min/week) and balanced diet. Achieve stable vital signs within normal ranges. Reduce cardiovascular risk factors."
     }
 
 if __name__ == "__main__":

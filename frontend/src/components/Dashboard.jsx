@@ -9,6 +9,7 @@ import * as XLSX from 'xlsx'
 import VitalsForm from './VitalsForm'
 import VitalsAnalysisDisplay from './VitalsAnalysisDisplay'
 import CollapsibleSection from './CollapsibleSection'
+import AISuggestionDisplay from './AISuggestionDisplay'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement)
 
@@ -50,6 +51,10 @@ const Dashboard = ({ onLogout }) => {
   
   // Floating action menu state
   const [showFloatingMenu, setShowFloatingMenu] = useState(false)
+  
+  // AI suggestions state - will stack like analyses
+  const [aiSuggestions, setAiSuggestions] = useState([])
+  const [loadingSuggestion, setLoadingSuggestion] = useState(false)
 
   const handleDrag = (e) => {
     e.preventDefault()
@@ -109,6 +114,123 @@ const Dashboard = ({ onLogout }) => {
     }
   }
 
+  // AI Suggestion Handlers
+  const handleSuggestPrescription = async () => {
+    if (!patientData.name) {
+      alert('Please enter patient information first')
+      return
+    }
+
+    setLoadingSuggestion(true)
+    setShowFloatingMenu(false)
+
+    try {
+      // Gather context from all analyses
+      const context = {
+        patient: patientData,
+        vitals: vitalsAnalysis,
+        labReports: analysisHistory.map(a => ({
+          fileName: a.fileName,
+          metrics: a.data.metrics,
+          summary: a.data.summary
+        }))
+      }
+
+      const response = await axios.post('/api/suggest-prescription', context)
+      
+      const newSuggestion = {
+        id: Date.now(),
+        type: 'prescription',
+        timestamp: new Date().toLocaleString(),
+        data: response.data
+      }
+      
+      setAiSuggestions(prev => [...prev, newSuggestion])
+    } catch (error) {
+      console.error('Prescription suggestion error:', error)
+      alert('Error generating prescription. Please try again.')
+    } finally {
+      setLoadingSuggestion(false)
+    }
+  }
+
+  const handleSuggestLabTests = async () => {
+    if (!patientData.name) {
+      alert('Please enter patient information first')
+      return
+    }
+
+    setLoadingSuggestion(true)
+    setShowFloatingMenu(false)
+
+    try {
+      const context = {
+        patient: patientData,
+        vitals: vitalsAnalysis,
+        labReports: analysisHistory.map(a => ({
+          fileName: a.fileName,
+          metrics: a.data.metrics,
+          summary: a.data.summary
+        }))
+      }
+
+      const response = await axios.post('/api/suggest-lab-tests', context)
+      
+      const newSuggestion = {
+        id: Date.now(),
+        type: 'lab-tests',
+        timestamp: new Date().toLocaleString(),
+        data: response.data
+      }
+      
+      setAiSuggestions(prev => [...prev, newSuggestion])
+    } catch (error) {
+      console.error('Lab tests suggestion error:', error)
+      alert('Error suggesting lab tests. Please try again.')
+    } finally {
+      setLoadingSuggestion(false)
+    }
+  }
+
+  const handleGenerateFollowUp = async () => {
+    if (!patientData.name) {
+      alert('Please enter patient information first')
+      return
+    }
+
+    setLoadingSuggestion(true)
+    setShowFloatingMenu(false)
+
+    try {
+      const context = {
+        patient: patientData,
+        vitals: vitalsAnalysis,
+        labReports: analysisHistory.map(a => ({
+          fileName: a.fileName,
+          metrics: a.data.metrics,
+          summary: a.data.summary,
+          recommendations: a.data.recommendations
+        }))
+      }
+
+      const response = await axios.post('/api/generate-followup', context)
+      
+      const newSuggestion = {
+        id: Date.now(),
+        type: 'followup',
+        timestamp: new Date().toLocaleString(),
+        data: response.data
+      }
+      
+      setAiSuggestions(prev => [...prev, newSuggestion])
+    } catch (error) {
+      console.error('Follow-up plan error:', error)
+      alert('Error generating follow-up plan. Please try again.')
+    } finally {
+      setLoadingSuggestion(false)
+    }
+  }
+
   const handleAnalyze = async () => {
     if (!file || !patientData.name || !patientData.age) {
       alert('Please fill in all patient details and upload a file')
@@ -147,7 +269,10 @@ const Dashboard = ({ onLogout }) => {
   }
 
   const exportToPDF = () => {
-    if (analysisHistory.length === 0) return
+    if (analysisHistory.length === 0 && !vitalsAnalysis) {
+      alert('No data to export. Please complete vitals analysis or upload lab reports first.')
+      return
+    }
 
     const doc = new jsPDF()
     let yPosition = 20
@@ -274,6 +399,122 @@ const Dashboard = ({ onLogout }) => {
       }
     })
 
+    // Add AI Suggestions if available
+    if (aiSuggestions.length > 0) {
+      if (yPosition > 250) {
+        doc.addPage()
+        yPosition = 20
+      }
+      
+      doc.setFontSize(16)
+      doc.setFont(undefined, 'bold')
+      doc.text('AI-Generated Suggestions', 14, yPosition)
+      yPosition += 12
+      
+      aiSuggestions.forEach((suggestion, index) => {
+        if (yPosition > 240) {
+          doc.addPage()
+          yPosition = 20
+        }
+        
+        doc.setFontSize(14)
+        doc.setFont(undefined, 'bold')
+        const title = suggestion.type === 'prescription' ? 'AI-Suggested Prescription' :
+                     suggestion.type === 'lab-tests' ? 'AI-Recommended Lab Tests' :
+                     'AI-Generated Follow-up Plan'
+        doc.text(title, 14, yPosition)
+        yPosition += 7
+        doc.setFontSize(10)
+        doc.setFont(undefined, 'italic')
+        doc.text(suggestion.timestamp, 14, yPosition)
+        yPosition += 10
+        
+        if (suggestion.type === 'prescription' && suggestion.data.medications) {
+          doc.setFontSize(12)
+          doc.autoTable({
+            startY: yPosition,
+            head: [['Medication', 'Dosage', 'Frequency', 'Duration', 'Priority']],
+            body: suggestion.data.medications.map(m => [
+              m.name, m.dosage, m.frequency, m.duration, m.priority || 'N/A'
+            ]),
+            theme: 'striped',
+            headStyles: { fillColor: [59, 130, 246] }
+          })
+          yPosition = doc.lastAutoTable.finalY + 10
+          
+          if (suggestion.data.notes) {
+            doc.setFont(undefined, 'bold')
+            doc.text('Notes:', 14, yPosition)
+            yPosition += 5
+            doc.setFont(undefined, 'normal')
+            const notes = doc.splitTextToSize(suggestion.data.notes, 180)
+            doc.text(notes, 14, yPosition)
+            yPosition += notes.length * 5 + 10
+          }
+        }
+        
+        if (suggestion.type === 'lab-tests' && suggestion.data.tests) {
+          doc.setFontSize(12)
+          doc.autoTable({
+            startY: yPosition,
+            head: [['Test Name', 'Reason', 'Urgency']],
+            body: suggestion.data.tests.map(t => [t.name, t.reason, t.urgency]),
+            theme: 'striped',
+            headStyles: { fillColor: [147, 51, 234] }
+          })
+          yPosition = doc.lastAutoTable.finalY + 10
+          
+          if (suggestion.data.instructions) {
+            doc.setFont(undefined, 'bold')
+            doc.text('Instructions:', 14, yPosition)
+            yPosition += 5
+            doc.setFont(undefined, 'normal')
+            const inst = doc.splitTextToSize(suggestion.data.instructions, 180)
+            doc.text(inst, 14, yPosition)
+            yPosition += inst.length * 5 + 10
+          }
+        }
+        
+        if (suggestion.type === 'followup' && suggestion.data.schedule) {
+          doc.setFontSize(12)
+          doc.autoTable({
+            startY: yPosition,
+            head: [['Timeframe', 'Action', 'Details']],
+            body: suggestion.data.schedule.map(s => [s.timeframe, s.action, s.details || '']),
+            theme: 'striped',
+            headStyles: { fillColor: [34, 197, 94] }
+          })
+          yPosition = doc.lastAutoTable.finalY + 10
+          
+          if (suggestion.data.monitoring) {
+            doc.setFont(undefined, 'bold')
+            doc.text('Monitoring:', 14, yPosition)
+            yPosition += 5
+            doc.setFont(undefined, 'normal')
+            const mon = doc.splitTextToSize(suggestion.data.monitoring, 180)
+            doc.text(mon, 14, yPosition)
+            yPosition += mon.length * 5 + 7
+          }
+          
+          if (suggestion.data.goals) {
+            if (yPosition > 250) {
+              doc.addPage()
+              yPosition = 20
+            }
+            doc.setFont(undefined, 'bold')
+            doc.text('Health Goals:', 14, yPosition)
+            yPosition += 5
+            doc.setFont(undefined, 'normal')
+            const goals = doc.splitTextToSize(suggestion.data.goals, 180)
+            doc.text(goals, 14, yPosition)
+            yPosition += goals.length * 5 + 10
+          }
+        }
+        
+        yPosition += 5
+      })
+    }
+
     doc.save(`MediLens_Report_${patientData.name}_${new Date().toISOString().split('T')[0]}.pdf`)
   }
   
@@ -290,7 +531,10 @@ const Dashboard = ({ onLogout }) => {
   }
 
   const exportToExcel = () => {
-    if (analysisHistory.length === 0) return
+    if (analysisHistory.length === 0 && !vitalsAnalysis) {
+      alert('No data to export. Please complete vitals analysis or upload lab reports first.')
+      return
+    }
 
     const data = [
       ['MediLens - Health Analysis Report'],
@@ -352,13 +596,73 @@ const Dashboard = ({ onLogout }) => {
       data.push([])
     })
 
+    // Add AI Suggestions
+    if (aiSuggestions.length > 0) {
+      data.push(['=== AI-GENERATED SUGGESTIONS ==='])
+      data.push([])
+      
+      aiSuggestions.forEach((suggestion, index) => {
+        const title = suggestion.type === 'prescription' ? 'AI-Suggested Prescription' :
+                     suggestion.type === 'lab-tests' ? 'AI-Recommended Lab Tests' :
+                     'AI-Generated Follow-up Plan'
+        data.push([title])
+        data.push(['Timestamp', suggestion.timestamp])
+        data.push([])
+        
+        if (suggestion.type === 'prescription' && suggestion.data.medications) {
+          data.push(['Medications'])
+          data.push(['Name', 'Dosage', 'Frequency', 'Duration', 'Priority'])
+          suggestion.data.medications.forEach(m => {
+            data.push([m.name, m.dosage, m.frequency, m.duration, m.priority || 'N/A'])
+          })
+          if (suggestion.data.notes) {
+            data.push([])
+            data.push(['Notes', suggestion.data.notes])
+          }
+        }
+        
+        if (suggestion.type === 'lab-tests' && suggestion.data.tests) {
+          data.push(['Recommended Tests'])
+          data.push(['Test Name', 'Reason', 'Urgency'])
+          suggestion.data.tests.forEach(t => {
+            data.push([t.name, t.reason, t.urgency])
+          })
+          if (suggestion.data.instructions) {
+            data.push([])
+            data.push(['Instructions', suggestion.data.instructions])
+          }
+        }
+        
+        if (suggestion.type === 'followup' && suggestion.data.schedule) {
+          data.push(['Follow-up Schedule'])
+          data.push(['Timeframe', 'Action', 'Details'])
+          suggestion.data.schedule.forEach(s => {
+            data.push([s.timeframe, s.action, s.details || ''])
+          })
+          if (suggestion.data.monitoring) {
+            data.push([])
+            data.push(['Monitoring', suggestion.data.monitoring])
+          }
+          if (suggestion.data.goals) {
+            data.push([])
+            data.push(['Health Goals', suggestion.data.goals])
+          }
+        }
+        
+        data.push([])
+        data.push([])
+      })
+    }
+
     const ws = XLSX.utils.aoa_to_sheet(data)
     
     // Set column widths
     ws['!cols'] = [
       { wch: 20 },
       { wch: 50 },
-      { wch: 15 }
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 12 }
     ]
 
     const wb = XLSX.utils.book_new()
@@ -559,6 +863,11 @@ const Dashboard = ({ onLogout }) => {
           </div>
         )}
 
+        {/* AI Suggestions Display - Stack them like analyses */}
+        {aiSuggestions.length > 0 && aiSuggestions.map((suggestion) => (
+          <AISuggestionDisplay key={suggestion.id} suggestion={suggestion} />
+        ))}
+
         {/* Analysis History - Show all analyses */}
         {analysisHistory.length > 0 && analysisHistory.map((analysis, index) => (
           <div key={analysis.id} className="mb-6">
@@ -675,39 +984,40 @@ const Dashboard = ({ onLogout }) => {
             <div className="mb-4 space-y-2 animate-fadeIn">
               <button
                 className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
-                onClick={() => alert('Prescription suggestion feature - Coming soon!')}
+                onClick={handleSuggestPrescription}
+                disabled={loadingSuggestion}
               >
                 <span className="font-medium">📝 Suggest Prescription</span>
                 <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded group-hover:bg-blue-200">AI</span>
               </button>
               <button
                 className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
-                onClick={() => alert('Lab tests suggestion feature - Coming soon!')}
+                onClick={handleSuggestLabTests}
+                disabled={loadingSuggestion}
               >
                 <span className="font-medium">🔬 Suggest Lab Tests</span>
                 <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded group-hover:bg-purple-200">AI</span>
               </button>
               <button
                 className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
-                onClick={() => alert('Follow-up plan feature - Coming soon!')}
+                onClick={handleGenerateFollowUp}
+                disabled={loadingSuggestion}
               >
                 <span className="font-medium">📅 Generate Follow-up Plan</span>
                 <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded group-hover:bg-green-200">AI</span>
-              </button>
-              <button
-                className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
-                onClick={() => alert('Referral letter feature - Coming soon!')}
-              >
-                <span className="font-medium">🏥 Draft Referral Letter</span>
-                <span className="text-xs bg-orange-100 text-orange-600 px-2 py-1 rounded group-hover:bg-orange-200">AI</span>
               </button>
             </div>
           )}
           <button
             onClick={() => setShowFloatingMenu(!showFloatingMenu)}
-            className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition transform hover:scale-110"
+            disabled={loadingSuggestion}
+            className={`bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition transform hover:scale-110 ${
+              loadingSuggestion ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           >
-            {showFloatingMenu ? (
+            {loadingSuggestion ? (
+              <Loader2 className="h-6 w-6 animate-spin" />
+            ) : showFloatingMenu ? (
               <span className="text-2xl">✕</span>
             ) : (
               <Activity className="h-6 w-6" />
