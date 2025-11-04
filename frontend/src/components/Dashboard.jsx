@@ -19,7 +19,8 @@ const Dashboard = ({ onLogout }) => {
     age: '',
     gender: 'male',
   })
-  const [analysisResult, setAnalysisResult] = useState(null)
+  // Change to array to keep history of all analyses
+  const [analysisHistory, setAnalysisHistory] = useState([])
   const [loading, setLoading] = useState(false)
   const [dragActive, setDragActive] = useState(false)
   
@@ -46,6 +47,9 @@ const Dashboard = ({ onLogout }) => {
   // Section collapse states
   const [patientInfoCollapsed, setPatientInfoCollapsed] = useState(false)
   const [vitalsCollapsed, setVitalsCollapsed] = useState(false)
+  
+  // Floating action menu state
+  const [showFloatingMenu, setShowFloatingMenu] = useState(false)
 
   const handleDrag = (e) => {
     e.preventDefault()
@@ -122,7 +126,18 @@ const Dashboard = ({ onLogout }) => {
       const response = await axios.post('/api/analyze', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
-      setAnalysisResult(response.data)
+      
+      // Add to history instead of replacing
+      const newAnalysis = {
+        id: Date.now(),
+        fileName: file.name,
+        timestamp: new Date().toLocaleString(),
+        data: response.data,
+        patientInfo: { ...patientData }
+      }
+      
+      setAnalysisHistory(prev => [...prev, newAnalysis])
+      setFile(null) // Clear file for next upload
     } catch (error) {
       console.error('Analysis error:', error)
       alert('Error analyzing data. Please try again.')
@@ -132,39 +147,150 @@ const Dashboard = ({ onLogout }) => {
   }
 
   const exportToPDF = () => {
-    if (!analysisResult) return
+    if (analysisHistory.length === 0) return
 
     const doc = new jsPDF()
+    let yPosition = 20
     
+    // Title
     doc.setFontSize(20)
-    doc.text('MediLens - Health Analysis Report', 14, 20)
+    doc.setFont(undefined, 'bold')
+    doc.text('MediLens - Health Analysis Report', 14, yPosition)
+    yPosition += 10
     
+    // Patient Info
     doc.setFontSize(12)
-    doc.text(`Patient: ${patientData.name}`, 14, 35)
-    doc.text(`Age: ${patientData.age} | Gender: ${patientData.gender}`, 14, 42)
-    doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 49)
+    doc.setFont(undefined, 'normal')
+    doc.text(`Patient: ${patientData.name}`, 14, yPosition)
+    yPosition += 7
+    doc.text(`Age: ${patientData.age} | Gender: ${patientData.gender}`, 14, yPosition)
+    yPosition += 7
+    doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, yPosition)
+    yPosition += 15
     
-    doc.autoTable({
-      startY: 60,
-      head: [['Metric', 'Value', 'Status']],
-      body: analysisResult.metrics.map(m => [m.name, m.value, m.status])
-    })
-
-    doc.text('Analysis Summary:', 14, doc.lastAutoTable.finalY + 15)
-    const summary = doc.splitTextToSize(analysisResult.summary, 180)
-    doc.text(summary, 14, doc.lastAutoTable.finalY + 22)
-
-    if (analysisResult.recommendations) {
-      doc.text('Recommendations:', 14, doc.lastAutoTable.finalY + 45)
-      const recs = doc.splitTextToSize(analysisResult.recommendations, 180)
-      doc.text(recs, 14, doc.lastAutoTable.finalY + 52)
+    // Vitals Analysis if available
+    if (vitalsAnalysis) {
+      doc.setFontSize(14)
+      doc.setFont(undefined, 'bold')
+      doc.text('Vitals Analysis', 14, yPosition)
+      yPosition += 10
+      
+      doc.setFontSize(12)
+      doc.setFont(undefined, 'bold')
+      doc.text(`Health Score: ${vitalsAnalysis.overallScore}/100`, 14, yPosition)
+      yPosition += 10
+      
+      doc.setFont(undefined, 'normal')
+      doc.autoTable({
+        startY: yPosition,
+        head: [['Metric', 'Value', 'Status']],
+        body: vitalsAnalysis.metrics.map(m => [m.name, m.value, m.status]),
+        theme: 'striped',
+        headStyles: { fillColor: [59, 130, 246] }
+      })
+      
+      yPosition = doc.lastAutoTable.finalY + 10
+      
+      if (vitalsAnalysis.riskFactors && vitalsAnalysis.riskFactors.length > 0) {
+        doc.setFont(undefined, 'bold')
+        doc.text('Risk Factors:', 14, yPosition)
+        yPosition += 7
+        doc.setFont(undefined, 'normal')
+        vitalsAnalysis.riskFactors.forEach(risk => {
+          const lines = doc.splitTextToSize(`• ${risk}`, 180)
+          doc.text(lines, 14, yPosition)
+          yPosition += lines.length * 5
+        })
+        yPosition += 5
+      }
+      
+      doc.setFont(undefined, 'bold')
+      doc.text('Summary:', 14, yPosition)
+      yPosition += 7
+      doc.setFont(undefined, 'normal')
+      const summaryLines = doc.splitTextToSize(cleanMarkdown(vitalsAnalysis.summary), 180)
+      doc.text(summaryLines, 14, yPosition)
+      yPosition += summaryLines.length * 5 + 10
+      
+      if (yPosition > 250) {
+        doc.addPage()
+        yPosition = 20
+      }
     }
+    
+    // Each Lab Analysis
+    analysisHistory.forEach((analysis, index) => {
+      if (yPosition > 250) {
+        doc.addPage()
+        yPosition = 20
+      }
+      
+      doc.setFontSize(14)
+      doc.setFont(undefined, 'bold')
+      doc.text(`Lab Report ${index + 1}: ${analysis.fileName}`, 14, yPosition)
+      yPosition += 7
+      doc.setFontSize(10)
+      doc.setFont(undefined, 'italic')
+      doc.text(analysis.timestamp, 14, yPosition)
+      yPosition += 10
+
+      doc.setFontSize(12)
+      doc.autoTable({
+        startY: yPosition,
+        head: [['Metric', 'Value', 'Status']],
+        body: analysis.data.metrics.map(m => [m.name, m.value, m.status]),
+        theme: 'striped',
+        headStyles: { fillColor: [59, 130, 246] }
+      })
+
+      yPosition = doc.lastAutoTable.finalY + 10
+      
+      if (yPosition > 250) {
+        doc.addPage()
+        yPosition = 20
+      }
+
+      doc.setFont(undefined, 'bold')
+      doc.text('Analysis Summary:', 14, yPosition)
+      yPosition += 7
+      doc.setFont(undefined, 'normal')
+      const summary = doc.splitTextToSize(cleanMarkdown(analysis.data.summary), 180)
+      doc.text(summary, 14, yPosition)
+      yPosition += summary.length * 5 + 10
+
+      if (analysis.data.recommendations) {
+        if (yPosition > 250) {
+          doc.addPage()
+          yPosition = 20
+        }
+        
+        doc.setFont(undefined, 'bold')
+        doc.text('Recommendations:', 14, yPosition)
+        yPosition += 7
+        doc.setFont(undefined, 'normal')
+        const recs = doc.splitTextToSize(cleanMarkdown(analysis.data.recommendations), 180)
+        doc.text(recs, 14, yPosition)
+        yPosition += recs.length * 5 + 15
+      }
+    })
 
     doc.save(`MediLens_Report_${patientData.name}_${new Date().toISOString().split('T')[0]}.pdf`)
   }
+  
+  // Helper function to clean markdown formatting
+  const cleanMarkdown = (text) => {
+    if (!text) return ''
+    return text
+      .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold **text**
+      .replace(/\*(.+?)\*/g, '$1') // Remove italic *text*
+      .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links [text](url)
+      .replace(/^#+\s+/gm, '') // Remove headers
+      .replace(/`(.+?)`/g, '$1') // Remove inline code
+      .trim()
+  }
 
   const exportToExcel = () => {
-    if (!analysisResult) return
+    if (analysisHistory.length === 0) return
 
     const data = [
       ['MediLens - Health Analysis Report'],
@@ -174,33 +300,83 @@ const Dashboard = ({ onLogout }) => {
       ['Age', patientData.age],
       ['Gender', patientData.gender],
       ['Date', new Date().toLocaleDateString()],
-      [],
-      ['Health Metrics'],
-      ['Metric', 'Value', 'Status'],
-      ...analysisResult.metrics.map(m => [m.name, m.value, m.status]),
-      [],
-      ['Summary'],
-      [analysisResult.summary],
-      [],
-      ['Recommendations'],
-      [analysisResult.recommendations || 'N/A']
+      []
     ]
+    
+    // Add vitals analysis
+    if (vitalsAnalysis) {
+      data.push(['=== VITALS ANALYSIS ==='])
+      data.push(['Health Score', `${vitalsAnalysis.overallScore}/100`])
+      data.push([])
+      data.push(['Vital Metrics'])
+      data.push(['Metric', 'Value', 'Status'])
+      vitalsAnalysis.metrics.forEach(m => {
+        data.push([m.name, m.value, m.status])
+      })
+      data.push([])
+      
+      if (vitalsAnalysis.riskFactors && vitalsAnalysis.riskFactors.length > 0) {
+        data.push(['Risk Factors'])
+        vitalsAnalysis.riskFactors.forEach(risk => {
+          data.push([cleanMarkdown(risk)])
+        })
+        data.push([])
+      }
+      
+      data.push(['Summary'])
+      data.push([cleanMarkdown(vitalsAnalysis.summary)])
+      data.push([])
+      data.push(['Recommendations'])
+      data.push([cleanMarkdown(vitalsAnalysis.recommendations)])
+      data.push([])
+      data.push([])
+    }
+    
+    // Add each lab analysis
+    analysisHistory.forEach((analysis, index) => {
+      data.push([`=== LAB REPORT ${index + 1}: ${analysis.fileName} ===`])
+      data.push(['Timestamp', analysis.timestamp])
+      data.push([])
+      data.push(['Health Metrics'])
+      data.push(['Metric', 'Value', 'Status'])
+      analysis.data.metrics.forEach(m => {
+        data.push([m.name, m.value, m.status])
+      })
+      data.push([])
+      data.push(['Summary'])
+      data.push([cleanMarkdown(analysis.data.summary)])
+      data.push([])
+      data.push(['Recommendations'])
+      data.push([cleanMarkdown(analysis.data.recommendations || 'N/A')])
+      data.push([])
+      data.push([])
+    })
 
     const ws = XLSX.utils.aoa_to_sheet(data)
+    
+    // Set column widths
+    ws['!cols'] = [
+      { wch: 20 },
+      { wch: 50 },
+      { wch: 15 }
+    ]
+
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Analysis Report')
     XLSX.writeFile(wb, `MediLens_Report_${patientData.name}_${new Date().toISOString().split('T')[0]}.xlsx`)
   }
 
-  // Chart data
+  // Chart data - show latest analysis
   const getChartData = () => {
-    if (!analysisResult) return null
+    if (analysisHistory.length === 0) return null
+    
+    const latestAnalysis = analysisHistory[analysisHistory.length - 1].data
 
     const metricsData = {
-      labels: analysisResult.metrics.map(m => m.name),
+      labels: latestAnalysis.metrics.map(m => m.name),
       datasets: [{
         label: 'Health Metrics',
-        data: analysisResult.metrics.map(m => parseFloat(m.value) || 0),
+        data: latestAnalysis.metrics.map(m => parseFloat(m.value) || 0),
         backgroundColor: [
           'rgba(59, 130, 246, 0.6)',
           'rgba(139, 92, 246, 0.6)',
@@ -223,9 +399,9 @@ const Dashboard = ({ onLogout }) => {
       labels: ['Normal', 'At Risk', 'Critical'],
       datasets: [{
         data: [
-          analysisResult.metrics.filter(m => m.status === 'Normal').length,
-          analysisResult.metrics.filter(m => m.status === 'Warning').length,
-          analysisResult.metrics.filter(m => m.status === 'Critical').length,
+          latestAnalysis.metrics.filter(m => m.status === 'Normal').length,
+          latestAnalysis.metrics.filter(m => m.status === 'Warning').length,
+          latestAnalysis.metrics.filter(m => m.status === 'Critical').length,
         ],
         backgroundColor: ['#22c55e', '#f59e0b', '#ef4444'],
       }]
@@ -383,94 +559,162 @@ const Dashboard = ({ onLogout }) => {
           </div>
         )}
 
-        {/* Analysis Results */}
-        {analysisResult && (
-          <>
+        {/* Analysis History - Show all analyses */}
+        {analysisHistory.length > 0 && analysisHistory.map((analysis, index) => (
+          <div key={analysis.id} className="mb-6">
+            {/* Analysis Header with File Name */}
+            <div className="bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-t-lg p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold flex items-center">
+                    <FileText className="h-5 w-5 mr-2" />
+                    Analysis #{index + 1}: {analysis.fileName}
+                  </h3>
+                  <p className="text-sm text-blue-100 mt-1">{analysis.timestamp}</p>
+                </div>
+                <span className="bg-white text-blue-600 px-3 py-1 rounded-full text-sm font-semibold">
+                  Lab Report
+                </span>
+              </div>
+            </div>
+
             {/* Metrics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-              {analysisResult.metrics.map((metric, idx) => (
-                <div key={idx} className="bg-white rounded-lg shadow p-4">
-                  <p className="text-sm text-gray-600 mb-1">{metric.name}</p>
-                  <p className="text-2xl font-bold text-gray-800">{metric.value}</p>
-                  <span className={`inline-block mt-2 text-xs px-2 py-1 rounded ${
-                    metric.status === 'Normal' ? 'bg-green-100 text-green-800' :
-                    metric.status === 'Warning' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-red-100 text-red-800'
-                  }`}>
-                    {metric.status}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Charts */}
-            {chartData && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                <div className="lg:col-span-2 bg-white rounded-lg shadow p-6">
-                  <h2 className="text-lg font-semibold text-gray-800 mb-4">Health Metrics Overview</h2>
-                  <Bar
-                    data={chartData.metricsData}
-                    options={{
-                      responsive: true,
-                      plugins: {
-                        legend: { display: false },
-                        title: { display: false }
-                      }
-                    }}
-                  />
-                </div>
-                <div className="bg-white rounded-lg shadow p-6">
-                  <h2 className="text-lg font-semibold text-gray-800 mb-4">Risk Assessment</h2>
-                  <Doughnut
-                    data={chartData.riskData}
-                    options={{
-                      responsive: true,
-                      plugins: {
-                        legend: { position: 'bottom' }
-                      }
-                    }}
-                  />
-                </div>
+            <div className="bg-white rounded-b-lg shadow p-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+                {analysis.data.metrics.map((metric, idx) => (
+                  <div key={idx} className="border rounded-lg p-4 hover:shadow-md transition">
+                    <p className="text-sm text-gray-600 mb-1">{metric.name}</p>
+                    <p className="text-2xl font-bold text-gray-800">{metric.value}</p>
+                    <span className={`inline-block mt-2 text-xs px-2 py-1 rounded ${
+                      metric.status === 'Normal' ? 'bg-green-100 text-green-800' :
+                      metric.status === 'Warning' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {metric.status}
+                    </span>
+                  </div>
+                ))}
               </div>
-            )}
 
-            {/* Summary & Recommendations */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-lg font-semibold text-gray-800 mb-3">Analysis Summary</h2>
-                <p className="text-gray-700 leading-relaxed">{analysisResult.summary}</p>
-              </div>
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-lg font-semibold text-gray-800 mb-3">Recommendations</h2>
-                <p className="text-gray-700 leading-relaxed">
-                  {analysisResult.recommendations || 'No specific recommendations at this time.'}
-                </p>
+              {/* Summary & Recommendations for this analysis */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-blue-50 rounded-lg p-4">
+                  <h3 className="font-semibold text-gray-800 mb-2">Analysis Summary</h3>
+                  <p className="text-gray-700 leading-relaxed whitespace-pre-line">{cleanMarkdown(analysis.data.summary)}</p>
+                </div>
+                <div className="bg-green-50 rounded-lg p-4">
+                  <h3 className="font-semibold text-gray-800 mb-2">Recommendations</h3>
+                  <p className="text-gray-700 leading-relaxed whitespace-pre-line">
+                    {cleanMarkdown(analysis.data.recommendations) || 'No specific recommendations at this time.'}
+                  </p>
+                </div>
               </div>
             </div>
+          </div>
+        ))}
 
-            {/* Export Buttons */}
+        {/* Charts - Show latest analysis */}
+        {chartData && analysisHistory.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div className="lg:col-span-2 bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">Latest Health Metrics Overview</h2>
+              <Bar
+                data={chartData.metricsData}
+                options={{
+                  responsive: true,
+                  plugins: {
+                    legend: { display: false },
+                    title: { display: false }
+                  }
+                }}
+              />
+            </div>
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">Export Report</h2>
-              <div className="flex gap-4">
-                <button
-                  onClick={exportToPDF}
-                  className="flex items-center bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition"
-                >
-                  <Download className="h-5 w-5 mr-2" />
-                  Export as PDF
-                </button>
-                <button
-                  onClick={exportToExcel}
-                  className="flex items-center bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition"
-                >
-                  <Download className="h-5 w-5 mr-2" />
-                  Export as Excel
-                </button>
-              </div>
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">Risk Assessment</h2>
+              <Doughnut
+                data={chartData.riskData}
+                options={{
+                  responsive: true,
+                  plugins: {
+                    legend: { position: 'bottom' }
+                  }
+                }}
+              />
             </div>
-          </>
+          </div>
+        )}
+
+        {/* Export Buttons */}
+        {(analysisHistory.length > 0 || vitalsAnalysis) && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">Export Complete Report</h2>
+            <div className="flex gap-4">
+              <button
+                onClick={exportToPDF}
+                className="flex items-center bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition"
+              >
+                <Download className="h-5 w-5 mr-2" />
+                Export as PDF
+              </button>
+              <button
+                onClick={exportToExcel}
+                className="flex items-center bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition"
+              >
+                <Download className="h-5 w-5 mr-2" />
+                Export as Excel
+              </button>
+            </div>
+          </div>
         )}
       </main>
+
+      {/* Floating Action Menu for Doctors */}
+      {(vitalsAnalysis || analysisHistory.length > 0) && (
+        <div className="fixed bottom-8 right-8 z-50">
+          {showFloatingMenu && (
+            <div className="mb-4 space-y-2 animate-fadeIn">
+              <button
+                className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
+                onClick={() => alert('Prescription suggestion feature - Coming soon!')}
+              >
+                <span className="font-medium">📝 Suggest Prescription</span>
+                <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded group-hover:bg-blue-200">AI</span>
+              </button>
+              <button
+                className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
+                onClick={() => alert('Lab tests suggestion feature - Coming soon!')}
+              >
+                <span className="font-medium">🔬 Suggest Lab Tests</span>
+                <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded group-hover:bg-purple-200">AI</span>
+              </button>
+              <button
+                className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
+                onClick={() => alert('Follow-up plan feature - Coming soon!')}
+              >
+                <span className="font-medium">📅 Generate Follow-up Plan</span>
+                <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded group-hover:bg-green-200">AI</span>
+              </button>
+              <button
+                className="w-full bg-white text-gray-800 px-4 py-3 rounded-lg shadow-lg hover:shadow-xl transition flex items-center justify-between group"
+                onClick={() => alert('Referral letter feature - Coming soon!')}
+              >
+                <span className="font-medium">🏥 Draft Referral Letter</span>
+                <span className="text-xs bg-orange-100 text-orange-600 px-2 py-1 rounded group-hover:bg-orange-200">AI</span>
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => setShowFloatingMenu(!showFloatingMenu)}
+            className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition transform hover:scale-110"
+          >
+            {showFloatingMenu ? (
+              <span className="text-2xl">✕</span>
+            ) : (
+              <Activity className="h-6 w-6" />
+            )}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

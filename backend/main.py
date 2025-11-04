@@ -29,6 +29,17 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
 
+def clean_markdown(text):
+    """Remove markdown formatting from text"""
+    if not text:
+        return ''
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # Remove bold
+    text = re.sub(r'\*(.+?)\*', r'\1', text)  # Remove italic
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)  # Remove links
+    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)  # Remove headers
+    text = re.sub(r'`(.+?)`', r'\1', text)  # Remove inline code
+    return text.strip()
+
 @app.get("/")
 def read_root():
     return {"message": "MediLens API is running"}
@@ -134,45 +145,37 @@ async def analyze_vitals_data(patient: dict, vitals: dict):
         history_str = ", ".join(medical_history) if medical_history else "None reported"
         allergies_str = vitals.get('allergies', 'None reported')
         
-        prompt = f"""You are a medical AI assistant analyzing patient vital signs for health risk assessment.
+        prompt = f"""You are a medical AI assistant. Analyze these vital signs and provide CONCISE, structured response.
 
-Patient Information:
-- Name: {patient.get('name', 'Unknown')}
-- Age: {patient.get('age', 'Unknown')}
-- Gender: {patient.get('gender', 'Unknown')}
+Patient: {patient.get('name')}, Age: {patient.get('age')}, Gender: {patient.get('gender')}
 
-Current Vital Signs:
-- Blood Pressure: {vitals.get('systolic', 'N/A')}/{vitals.get('diastolic', 'N/A')} mmHg
-- Heart Rate: {vitals.get('heartRate', 'N/A')} bpm
-- Temperature: {vitals.get('temperature', 'N/A')} °F
-- Respiratory Rate: {vitals.get('respiratoryRate', 'N/A')} breaths/min
-- Oxygen Saturation: {vitals.get('oxygenSaturation', 'N/A')} %
-- Weight: {vitals.get('weight', 'N/A')} kg
-- Height: {vitals.get('height', 'N/A')} cm
+Vitals:
+- BP: {vitals.get('systolic')}/{vitals.get('diastolic')} mmHg
+- HR: {vitals.get('heartRate')} bpm | Temp: {vitals.get('temperature')}°F
+- RR: {vitals.get('respiratoryRate')}/min | SpO2: {vitals.get('oxygenSaturation')}%
+- Weight: {vitals.get('weight')} kg | Height: {vitals.get('height')} cm
 
 Medical History: {history_str}
 Allergies: {allergies_str}
 
-Please analyze these vitals and provide a response in the following exact JSON structure:
+IMPORTANT: Keep summary and recommendations BRIEF (2-3 sentences each). NO markdown formatting.
+
 {{
     "overallScore": 85,
     "metrics": [
-        {{"name": "Blood Pressure", "value": "120/80", "status": "Normal"}},
+        {{"name": "Blood Pressure", "value": "120/80 mmHg", "status": "Normal"}},
         {{"name": "Heart Rate", "value": "72 bpm", "status": "Normal"}},
         {{"name": "Temperature", "value": "98.6°F", "status": "Normal"}},
         {{"name": "Oxygen Level", "value": "98%", "status": "Normal"}},
         {{"name": "Respiratory Rate", "value": "16/min", "status": "Normal"}},
         {{"name": "BMI", "value": "24.5", "status": "Normal"}}
     ],
-    "riskFactors": ["List any identified risk factors based on vitals and medical history"],
-    "summary": "A detailed analysis summary of the patient's current health status based on the vital signs.",
-    "recommendations": "Specific recommendations for maintaining or improving health based on these vitals."
+    "riskFactors": ["Brief risk factors if any, or 'No immediate concerns'"],
+    "summary": "Brief 2-3 sentence analysis. Plain text only.",
+    "recommendations": "Brief 2-3 sentence advice. Plain text only."
 }}
 
-Status can be: "Normal", "Warning", or "Critical"
-Overall score should be 0-100 based on how healthy the vitals are.
-Consider medical history and age when assessing risk factors.
-Calculate BMI from weight and height if available.
+Rules: Status is "Normal", "Warning", or "Critical". Score 0-100. Include BMI. NO bold/italic text.
 """
 
         response = model.generate_content(prompt)
@@ -183,6 +186,9 @@ Calculate BMI from weight and height if available.
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_match:
             result = json.loads(json_match.group())
+            # Clean any markdown
+            result['summary'] = clean_markdown(result.get('summary', ''))
+            result['recommendations'] = clean_markdown(result.get('recommendations', ''))
             return result
         else:
             return generate_mock_vitals_analysis(patient, vitals)
@@ -199,31 +205,33 @@ async def analyze_health_data(extracted_text: str, name: str, age: str, gender: 
         return generate_mock_analysis(name, age, gender)
     
     try:
-        prompt = f"""You are a medical AI assistant analyzing health data for cardiovascular risk assessment.
+        prompt = f"""You are a medical AI assistant. Analyze this lab report and provide a concise, structured response.
 
-Patient Information:
-- Name: {name}
-- Age: {age}
-- Gender: {gender}
+Patient: {name}, Age: {age}, Gender: {gender}
 
 Lab Report Data:
 {extracted_text}
 
-Please analyze this data and provide a response in the following exact JSON structure:
+IMPORTANT: Provide a CONCISE response in EXACT JSON format. Keep summary and recommendations brief (2-3 sentences each).
+
 {{
     "metrics": [
-        {{"name": "Blood Pressure", "value": "120/80", "status": "Normal"}},
+        {{"name": "Blood Pressure", "value": "120/80 mmHg", "status": "Normal"}},
         {{"name": "Cholesterol", "value": "190 mg/dL", "status": "Normal"}},
         {{"name": "Heart Rate", "value": "72 bpm", "status": "Normal"}},
         {{"name": "Blood Sugar", "value": "95 mg/dL", "status": "Normal"}},
         {{"name": "BMI", "value": "24.5", "status": "Normal"}}
     ],
-    "summary": "A detailed analysis summary of the patient's cardiovascular health based on the lab results.",
-    "recommendations": "Specific recommendations for maintaining or improving heart health."
+    "summary": "Brief 2-3 sentence analysis. Patient's cardiovascular health indicators are within normal ranges. No immediate concerns noted.",
+    "recommendations": "Brief 2-3 sentence advice. Continue healthy lifestyle. Schedule annual checkup. Monitor blood pressure regularly."
 }}
 
-Status can be: "Normal", "Warning", or "Critical"
-Focus on cardiovascular health metrics. If specific values aren't in the report, make reasonable estimates based on age and gender.
+Rules:
+- Status: "Normal", "Warning", or "Critical"
+- Summary: Max 3 sentences, plain text, no formatting
+- Recommendations: Max 3 sentences, plain text, no formatting
+- DO NOT use markdown formatting (**bold**, *italic*, etc)
+- Focus on key cardiovascular metrics
 """
 
         response = model.generate_content(prompt)
@@ -231,13 +239,14 @@ Focus on cardiovascular health metrics. If specific values aren't in the report,
         
         # Extract JSON from response
         import json
-        # Try to find JSON in the response
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_match:
             result = json.loads(json_match.group())
+            # Clean any remaining markdown
+            result['summary'] = clean_markdown(result.get('summary', ''))
+            result['recommendations'] = clean_markdown(result.get('recommendations', ''))
             return result
         else:
-            # Fallback to mock data if JSON parsing fails
             return generate_mock_analysis(name, age, gender)
             
     except Exception as e:
@@ -339,22 +348,22 @@ def generate_mock_vitals_analysis(patient: dict, vitals: dict):
             {"name": "BMI", "value": bmi, "status": bmi_status}
         ],
         "riskFactors": risk_factors if risk_factors else ["No immediate risk factors identified"],
-        "summary": f"Patient {patient.get('name', 'Unknown')} (Age: {patient.get('age', 'N/A')}, Gender: {patient.get('gender', 'N/A')}) presents with vital signs that are {'mostly within normal ranges' if score > 80 else 'showing some concerning indicators' if score > 70 else 'requiring medical attention'}. Current health score is {score}/100. {'All vital parameters are stable.' if score > 85 else 'Some vital signs require monitoring.' if score > 70 else 'Immediate medical consultation recommended.'}",
-        "recommendations": f"{'Continue maintaining healthy lifestyle habits. Regular exercise and balanced diet recommended.' if score > 85 else 'Increase monitoring frequency. Consider lifestyle modifications and follow up with healthcare provider within 1 week.' if score > 70 else 'Seek immediate medical attention. Close monitoring and possible intervention required.'}"
+        "summary": f"Patient {patient.get('name')} presents with health score of {score}/100. Vital signs are {'within normal ranges' if score > 80 else 'showing some concerns' if score > 70 else 'requiring attention'}. {'All parameters stable' if score > 85 else 'Monitoring recommended' if score > 70 else 'Medical consultation needed'}.",
+        "recommendations": f"{'Continue healthy lifestyle with regular exercise and balanced diet' if score > 85 else 'Increase monitoring frequency and consider lifestyle modifications' if score > 70 else 'Seek immediate medical attention for evaluation'}. {'Schedule annual checkup' if score > 70 else 'Follow up within one week'}."
     }
 
 def generate_mock_analysis(name: str, age: str, gender: str):
     """Generate mock analysis data for demonstration"""
     return {
         "metrics": [
-            {"name": "Blood Pressure", "value": "118/78", "status": "Normal"},
+            {"name": "Blood Pressure", "value": "118/78 mmHg", "status": "Normal"},
             {"name": "Cholesterol", "value": "185 mg/dL", "status": "Normal"},
             {"name": "Heart Rate", "value": "68 bpm", "status": "Normal"},
             {"name": "Blood Sugar", "value": "92 mg/dL", "status": "Normal"},
             {"name": "Triglycerides", "value": "145 mg/dL", "status": "Normal"}
         ],
-        "summary": f"Based on the analysis of {name}'s lab reports (Age: {age}, Gender: {gender}), the cardiovascular health indicators are within normal ranges. Blood pressure readings show healthy systolic and diastolic values. Cholesterol levels are optimal, with good HDL/LDL ratio. Heart rate is stable and within expected parameters. Blood sugar levels indicate no signs of diabetes risk. Overall cardiovascular health appears good with no immediate concerns.",
-        "recommendations": "Continue maintaining a balanced diet rich in omega-3 fatty acids and fiber. Engage in at least 150 minutes of moderate aerobic activity per week. Monitor blood pressure regularly at home. Stay hydrated and limit sodium intake to less than 2,300mg daily. Schedule routine cardiovascular checkups annually. Consider stress management techniques like meditation or yoga."
+        "summary": f"Patient {name}'s cardiovascular health indicators are within normal ranges for age {age}. Blood pressure and heart rate show healthy values. No immediate concerns detected based on lab results.",
+        "recommendations": "Continue maintaining a balanced diet and regular exercise routine. Monitor blood pressure monthly. Schedule annual cardiovascular checkup for preventive care."
     }
 
 if __name__ == "__main__":
