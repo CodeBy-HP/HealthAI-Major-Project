@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import Login from './components/Login'
+import HeroPage from './pages/HeroPage'
 import Dashboard from './components/Dashboard'
 
 function App() {
@@ -10,18 +10,17 @@ function App() {
     <Router>
       <Routes>
         <Route 
-          path="/login" 
+          path="/" 
           element={
-            isAuthenticated ? <Navigate to="/dashboard" /> : <Login onLogin={() => setIsAuthenticated(true)} />
+            isAuthenticated ? <Navigate to="/dashboard" /> : <HeroPage onLogin={() => setIsAuthenticated(true)} />
           } 
         />
         <Route 
           path="/dashboard" 
           element={
-            isAuthenticated ? <Dashboard onLogout={() => setIsAuthenticated(false)} /> : <Navigate to="/login" />
+            isAuthenticated ? <Dashboard onLogout={() => setIsAuthenticated(false)} /> : <Navigate to="/" />
           } 
         />
-        <Route path="/" element={<Navigate to="/login" />} />
       </Routes>
     </Router>
   )
