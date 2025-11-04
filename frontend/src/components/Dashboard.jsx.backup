@@ -1,53 +1,84 @@
 import { useState } from 'react'
-import { Activity, Upload, LogOut, FileText, Download, Loader2 } from 'lucide-react'
+import { Activity, Upload, LogOut, FileText, Download, Loader2, ChevronDown, ChevronUp, Heart, Thermometer, User, Stethoscope, Pill, TrendingUp, Sparkles } from 'lucide-react'
 import axios from 'axios'
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement } from 'chart.js'
-import { Bar, Line, Doughnut } from 'react-chartjs-2'
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale } from 'chart.js'
+import { Bar, Line, Doughnut, Radar } from 'react-chartjs-2'
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
 import * as XLSX from 'xlsx'
-import VitalsForm from './VitalsForm'
-import VitalsAnalysisDisplay from './VitalsAnalysisDisplay'
-import CollapsibleSection from './CollapsibleSection'
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement)
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement, RadialLinearScale)
 
 const Dashboard = ({ onLogout }) => {
-  const [file, setFile] = useState(null)
-  const [patientData, setPatientData] = useState({
-    name: '',
-    age: '',
-    gender: 'male',
+  // Session State Management
+  const [sessionData, setSessionData] = useState({
+    patientInfo: { name: '', age: '', gender: 'male' },
+    vitals: {
+      bloodPressure: { systolic: '', diastolic: '' },
+      heartRate: '',
+      temperature: '',
+      respiratoryRate: '',
+      oxygenSaturation: '',
+      weight: '',
+      height: ''
+    },
+    medicalHistory: {
+      conditions: [],
+      allergies: '',
+      currentMedications: ''
+    },
+    symptoms: [],
+    medicines: [],
+    labReports: [],
+    analyses: {
+      vitalsAnalysis: null,
+      comprehensiveAnalysis: null
+    }
   })
-  const [analysisResult, setAnalysisResult] = useState(null)
+
+  // UI State
+  const [sections, setSections] = useState({
+    patientInfo: { completed: false, collapsed: false },
+    vitals: { completed: false, collapsed: false },
+    vitalsAnalysis: { visible: false },
+    doctorWorkspace: { visible: false }
+  })
+  
   const [loading, setLoading] = useState(false)
   const [dragActive, setDragActive] = useState(false)
-  
-  // New states for progressive dashboard
-  const [vitals, setVitals] = useState({
-    systolic: '',
-    diastolic: '',
-    heartRate: '',
-    temperature: '',
-    respiratoryRate: '',
-    oxygenSaturation: '',
-    weight: '',
-    height: '',
-    heartDisease: false,
-    diabetes: false,
-    hypertension: false,
-    asthma: false,
-    otherConditions: '',
-    allergies: ''
-  })
-  const [vitalsAnalysis, setVitalsAnalysis] = useState(null)
-  const [loadingVitals, setLoadingVitals] = useState(false)
-  
-  // Section collapse states
-  const [patientInfoCollapsed, setPatientInfoCollapsed] = useState(false)
-  const [vitalsCollapsed, setVitalsCollapsed] = useState(false)
+  const [currentSymptom, setCurrentSymptom] = useState('')
+  const [currentMedicine, setCurrentMedicine] = useState('')
 
-  const handleDrag = (e) => {
+  // Helper Functions
+  const toggleSection = (section) => {
+    setSections(prev => ({
+      ...prev,
+      [section]: { ...prev[section], collapsed: !prev[section].collapsed }
+    }))
+  }
+
+  const completeSection = (section) => {
+    setSections(prev => ({
+      ...prev,
+      [section]: { ...prev[section], completed: true, collapsed: true }
+    }))
+  }
+
+  const updateSessionData = (path, value) => {
+    setSessionData(prev => {
+      const keys = path.split('.')
+      const updated = { ...prev }
+      let current = updated
+      for (let i = 0; i < keys.length - 1; i++) {
+        current[keys[i]] = { ...current[keys[i]] }
+        current = current[keys[i]]
+      }
+      current[keys[keys.length - 1]] = value
+      return updated
+    })
+  }
+
+  // File Upload Handlers (keeping existing logic)
     e.preventDefault()
     e.stopPropagation()
     if (e.type === "dragenter" || e.type === "dragover") {
@@ -80,28 +111,6 @@ const Dashboard = ({ onLogout }) => {
       } else {
         alert('Please upload only PDF or image files')
       }
-    }
-  }
-
-  const handleAnalyzeVitals = async () => {
-    if (!patientData.name || !patientData.age) {
-      alert('Please fill in patient details first')
-      return
-    }
-
-    setLoadingVitals(true)
-    try {
-      const response = await axios.post('/api/analyze-vitals', {
-        patient: patientData,
-        vitals: vitals
-      })
-      setVitalsAnalysis(response.data)
-      setVitalsCollapsed(true) // Collapse vitals form after analysis
-    } catch (error) {
-      console.error('Vitals analysis error:', error)
-      alert('Error analyzing vitals. Please try again.')
-    } finally {
-      setLoadingVitals(false)
     }
   }
 
@@ -356,32 +365,6 @@ const Dashboard = ({ onLogout }) => {
             </button>
           </div>
         </div>
-
-        {/* Vitals Entry Section */}
-        {patientData.name && patientData.age && (
-          <div className="mb-6">
-            <CollapsibleSection
-              title="Patient Vitals & Medical History"
-              completed={vitalsAnalysis !== null}
-              collapsed={vitalsCollapsed}
-              onToggle={() => setVitalsCollapsed(!vitalsCollapsed)}
-            >
-              <VitalsForm
-                vitals={vitals}
-                onChange={setVitals}
-                onSubmit={handleAnalyzeVitals}
-                disabled={loadingVitals}
-              />
-            </CollapsibleSection>
-          </div>
-        )}
-
-        {/* Vitals Analysis Display */}
-        {vitalsAnalysis && (
-          <div className="mb-6">
-            <VitalsAnalysisDisplay analysis={vitalsAnalysis} />
-          </div>
-        )}
 
         {/* Analysis Results */}
         {analysisResult && (
